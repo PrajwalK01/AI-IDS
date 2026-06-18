@@ -4,13 +4,16 @@ AI-IDS – Main pipeline entrypoint.
 Usage:
     python main.py --dataset nslkdd --mode baseline
     python main.py --dataset nslkdd --mode deep
+    python main.py --dataset nslkdd --mode deep --fast      # quick CPU run
     python main.py --dataset cicids  --mode baseline
     python main.py --dataset nslkdd --mode forecast
 
 Flags:
-    --dataset   nslkdd | cicids          (default: nslkdd)
-    --mode      baseline | deep | all | forecast   (default: all)
+    --dataset   nslkdd | cicids                      (default: nslkdd)
+    --mode      baseline | deep | all | forecast     (default: all)
     --save      save trained models to disk
+    --fast      DL quick-run: 5 epochs, batch 1024, 20k training rows
+    --sample N  subsample N training rows (useful for quick experiments)
 """
 
 import argparse
@@ -21,6 +24,8 @@ from src.utils.helpers import setup_logger, set_seed, Timer
 from src.utils.config import (
     NSLKDD_TRAIN_PATH, NSLKDD_TEST_PATH, CICIDS_PATH,
     TARGET_COL, MODELS_DIR, RANDOM_STATE,
+    DL_EPOCHS, DL_BATCH_SIZE, DL_LEARNING_RATE,
+    DL_FAST_EPOCHS, DL_FAST_BATCH_SIZE, DL_FAST_SAMPLE,
 )
 from src.data.preprocess import (
     load_dataset, encode_nslkdd_labels, encode_cicids_labels,
@@ -110,21 +115,44 @@ def run_baseline(X_train, X_test, y_train, y_test, save: bool = False):
     return results
 
 
-def run_deep(X_train, X_test, y_train, y_test, input_dim: int, save: bool = False):
+def run_deep(X_train, X_test, y_train, y_test, input_dim: int,
+             save: bool = False, fast: bool = False, sample: int | None = None):
     """Train and evaluate deep learning models."""
     logger.info("═══ DEEP LEARNING MODELS ═══")
+
+    # ── Resolve training settings ──────────────────────────────────────────
+    if fast:
+        epochs     = DL_FAST_EPOCHS
+        batch_size = DL_FAST_BATCH_SIZE
+        n_sample   = DL_FAST_SAMPLE
+        logger.info("Fast mode: epochs=%d, batch=%d, sample=%d", epochs, batch_size, n_sample)
+    else:
+        epochs     = DL_EPOCHS
+        batch_size = DL_BATCH_SIZE
+        n_sample   = sample  # None means use all
+
+    # ── Optional subsampling ───────────────────────────────────────────────
+    if n_sample and n_sample < len(X_train):
+        rng = np.random.default_rng(RANDOM_STATE)
+        idx = rng.choice(len(X_train), size=n_sample, replace=False)
+        X_tr, y_tr = X_train[idx], y_train[idx]
+        logger.info("Subsampled training set: %d → %d rows", len(X_train), n_sample)
+    else:
+        X_tr, y_tr = X_train, y_train
+
     models = {}
-    num_classes = len(np.unique(y_train))
+    num_classes = len(np.unique(y_tr))
 
     for ModelClass, tag in [
-        (MLPClassifier, "MLP"),
-        (CNN1DClassifier, "CNN1D"),
-        (LSTMClassifier, "LSTM"),
+        (MLPClassifier,         "MLP"),
+        (CNN1DClassifier,       "CNN1D"),
+        (LSTMClassifier,        "LSTM"),
         (TransformerClassifier, "Transformer"),
     ]:
         with Timer(tag):
             m = ModelClass(input_dim=input_dim, num_classes=num_classes)
-            m.fit(X_train, y_train)
+            m.fit(X_tr, y_tr, epochs=epochs, batch_size=batch_size,
+                  lr=DL_LEARNING_RATE)
             models[tag] = m
             if save:
                 save_dl_model(m, tag.lower())
@@ -172,11 +200,16 @@ def main():
     parser.add_argument("--dataset", default="nslkdd", choices=["nslkdd", "cicids"])
     parser.add_argument("--mode", default="all",
                         choices=["baseline", "deep", "all", "forecast"])
-    parser.add_argument("--save", action="store_true", help="Save trained models")
+    parser.add_argument("--save",   action="store_true", help="Save trained models")
+    parser.add_argument("--fast",   action="store_true",
+                        help="Quick DL run: 5 epochs, large batch, 20k rows")
+    parser.add_argument("--sample", type=int, default=None,
+                        help="Subsample N training rows (e.g. --sample 30000)")
     args = parser.parse_args()
 
     set_seed(RANDOM_STATE)
-    logger.info("Dataset: %s | Mode: %s | Save: %s", args.dataset, args.mode, args.save)
+    logger.info("Dataset: %s | Mode: %s | Save: %s | Fast: %s | Sample: %s",
+                args.dataset, args.mode, args.save, args.fast, args.sample)
 
     if args.mode == "forecast":
         run_forecast(args.dataset)
@@ -188,7 +221,8 @@ def main():
         run_baseline(X_train, X_test, y_train, y_test, save=args.save)
 
     if args.mode in ("deep", "all"):
-        run_deep(X_train, X_test, y_train, y_test, input_dim, save=args.save)
+        run_deep(X_train, X_test, y_train, y_test, input_dim,
+                 save=args.save, fast=args.fast, sample=args.sample)
 
 
 if __name__ == "__main__":

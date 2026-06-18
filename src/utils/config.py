@@ -27,12 +27,17 @@ SVM_C = 1.0
 SVM_KERNEL = "rbf"
 
 # ── Deep Learning ──────────────────────────────────────────────────────────────
-DL_EPOCHS = 30
-DL_BATCH_SIZE = 256
+DL_EPOCHS = 15              # reduced from 30 – good enough on CPU, ~half the time
+DL_BATCH_SIZE = 512         # larger batch → fewer steps per epoch → faster
 DL_LEARNING_RATE = 1e-3
 DL_HIDDEN_DIM = 128
 DL_NUM_LAYERS = 2
 DL_DROPOUT = 0.3
+
+# Fast-mode overrides (used when --fast flag is passed)
+DL_FAST_EPOCHS = 5
+DL_FAST_BATCH_SIZE = 1024
+DL_FAST_SAMPLE = 20_000     # subsample training rows in fast mode
 
 # ── LSTM Forecasting ───────────────────────────────────────────────────────────
 LSTM_LOOKBACK = 10      # number of past timesteps to use as input
